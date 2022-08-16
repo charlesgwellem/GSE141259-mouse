@@ -206,9 +206,67 @@ seurat_integrated <- NormalizeData(seurat_integrated)
 
 FeaturePlot(seurat_integrated,
             features = "Gpnmb", order = TRUE)
+
+saveRDS(seurat_integrated,
+        "objects/macrophages.rds")
 ```
 
 ## Cell clustering with IKAP algorithm
+
+To discover major macrophages sub-pupulations, I perform clustering with IKAP.
+
+```{r ikap_with_alra}
+library(IKAP)
+library(openxlsx)
+library(ggplot2)
+
+DefaultAssay(seurat_integrated) <- "integrated"
+
+seurat_integrated <- ikap3(seurat_integrated,
+                           out.dir = "./IKAP")
+
+saveRDS(seurat_integrated,
+        "objects/macrophages.rds")
+
+# best clusterfing from IKAP is if one uses 5 PCs and 5 clusters
+
+DefaultAssay(seurat_integrated) <- "RNA"
+
+Idents(seurat_integrated) <- factor(seurat_integrated$PC7K8)
+
+DimPlot(seurat_integrated, label = TRUE,
+        split.by = "group")
+
+PC7K8_markers <- FindAllMarkers(seurat_integrated,
+                                assay = "RNA",
+                                slot = "data",
+                                only.pos = TRUE)
+write.xlsx(PC7K8_markers,
+           "results/PC7K8_markers.xlsx",
+           rowNames = TRUE)
+
+sig_PC7K8_markers <- subset(PC7K8_markers,
+                            p_val_adj < 0.05)
+
+top_sig_PC7K8_markers <- sig_PC7K8_markers %>%
+  group_by(cluster) %>% top_n(5, avg_log2FC)
+
+as.data.frame(top_sig_PC7K8_markers)
+
+seurat_integrated <- ScaleData(seurat_integrated,
+                        features = rownames(seurat_integrated))
+
+DimPlot(seurat_integrated, group.by = "PC7K8",
+        cols = colours, split.by = "group", label = TRUE)
+
+DoHeatmap(seurat_integrated, 
+          features = top_sig_PC7K8_markers$gene,
+          group.colors = colours)+
+  scale_color_manual(values = colours)
+
+FeaturePlot(seurat_integrated, features = "Mmp12",
+            order = TRUE, split.by = "group")
+```
 
 ## Session infomation
 ```{r session_info}
