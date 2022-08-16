@@ -1,0 +1,116 @@
+---
+title: "script"
+author: "Charles"
+date: "16 8 2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Description
+
+In this analysis of the [GSE141259](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE141259) dataset, I want to clarify the identity of the M2 and resolving macrophages, which the author does not specify.
+
+## Setup
+
+```{r setup, include=FALSE}
+.libPaths("V:/GROUPS/AG Ramming/Fellows/Charles/R-4.1.1/library")
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, error = FALSE)
+```
+
+## Load the libraries
+
+```{r libraries}
+library(SeuratObject)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(openxlsx)
+library(SeuratData)
+library(SeuratDisk)
+library(randomcoloR)
+```
+
+## load the dataset and perform differential expression analysis.
+
+```{r gse141259}
+set.seed(123)
+colours <- distinctColorPalette(200)
+
+obj_path <- "V:/GROUPS/AG Ramming/Fellows/Charles/Analyses/P01-ATF3 in ECs-Charles/GSE141259-mouse/QC_clustering_annotation_DEA/objects/analyses/version1"
+
+object_name <- "integrated_and_clustered.rds"
+
+seurat_obj <- readRDS(paste0(obj_path, "/", object_name))
+
+# inspect the seurat object
+DimPlot(seurat_obj, group.by = "metacelltype")
+
+unique(seurat_obj$metacelltype)
+
+table(seurat_obj$cell.type, seurat_obj$group)
+
+# identify markers of the metacelltypes
+Idents(seurat_obj) <- seurat_obj$metacelltype
+
+cell_markers <- FindAllMarkers(seurat_obj,
+                               assay = "RNA",
+                               slot = "data")
+write.xlsx(cell_markers,
+           "results/metacell_markers.xlsx",
+           rowNames = TRUE)
+
+cell_markers_sig <- subset(cell_markers,
+                           p_val_adj < 0.05 & avg_log2FC > 0)
+
+top_cell_markers <- cell_markers_sig %>%
+  group_by(cluster) %>% top_n(5, avg_log2FC)
+
+# visualise with heatmap
+DefaultAssay(seurat_obj) <- "RNA"
+
+Idents(seurat_obj) <- seurat_obj$metacelltype
+
+seurat_obj <- ScaleData(seurat_obj, assay = "RNA",
+                        features = rownames(seurat_obj))
+
+Seurat::DoHeatmap(seurat_obj, assay = "RNA",
+          features = top_cell_markers$gene, label = FALSE,
+          group.colors = colours) +
+  scale_color_manual(values = colours)
+ggsave("figures/heatmap_metacell_markers.pdf",
+       height = 8, width = 8, dpi = 500)
+
+# identify markers of the sub celltypes
+Idents(seurat_obj) <- seurat_obj$cell.type
+
+sub_cell_markers <- FindAllMarkers(seurat_obj,
+                               assay = "RNA",
+                               slot = "data")
+write.xlsx(sub_cell_markers,
+           "results/sub_cell_type_markers.xlsx",
+           rowNames = TRUE)
+
+# identify markers of the sub celltypes version2
+# this includes ILC2 annotation
+
+Idents(seurat_obj) <- seurat_obj$cell.type_2
+
+sub_cell_markers2 <- FindAllMarkers(seurat_obj,
+                               assay = "RNA",
+                               slot = "data",
+                               only.pos = TRUE)
+write.xlsx(sub_cell_markers2,
+           "results/sub_cell_type_markers_with_ILC2.xlsx",
+           rowNames = TRUE)
+```
+
+Results from the gene enrichment analysis show that the author's identification of the cells is consistent with literature and reliable.
+
+But because the the use ofthe terminology, M1 and M2 macrophages are obsolete, I will recluster the macrophages to better identify the macrophage subtypes.
+
+## Session infomation
+```{r session_info}
+sessionInfo()
+```
