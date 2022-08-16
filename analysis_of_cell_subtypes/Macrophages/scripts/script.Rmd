@@ -110,6 +110,106 @@ Results from the gene enrichment analysis show that the author's identification 
 
 But because the the use ofthe terminology, M1 and M2 macrophages are obsolete, I will recluster the macrophages to better identify the macrophage subtypes.
 
+## subset the macrophages and recluster them.
+
+```{r macrophages}
+# subset the macrophages
+Idents(seurat_obj) <- seurat_obj$metacelltype
+
+macrophages <- subset(seurat_obj,
+                      idents = "macrophages")
+
+# I consider the day to be the main source of batch
+
+# Split seurat object by condition to perform cell cycle scoring and SCT on all samples
+split_seurat <- SplitObject(macrophages, 
+                            split.by = "day")
+
+# use cconvert_human_to_mouse_symbols from nichenetr
+library(nichenetr)
+
+m.g2m.genes <- convert_human_to_mouse_symbols(cc.genes.updated.2019$g2m.genes)
+m.s.genes <- convert_human_to_mouse_symbols(cc.genes.updated.2019$s.genes)
+
+
+#to increase limits for allowable objects
+
+options(future.globals.maxSize = 4000 * 1024^2)
+
+for (i in 1:length(split_seurat)) {
+    split_seurat[[i]] <- NormalizeData(split_seurat[[i]], verbose = TRUE)
+    split_seurat[[i]] <- CellCycleScoring(split_seurat[[i]], 
+                                    g2m.features=m.g2m.genes,
+                                    s.features=m.s.genes)
+    
+    split_seurat[[i]]$CC.Difference <- split_seurat[[i]]$S.Score - split_seurat[[i]]$G2M.Score
+
+    split_seurat[[i]] <- SCTransform(split_seurat[[i]], 
+                                     vars.to.regress = c("CC.Difference"))
+}
+
+
+# perform integration
+# Select the most variable features to use for integration
+integ_features <- SelectIntegrationFeatures(object.list = 
+                                            split_seurat, 
+                                            nfeatures = 3000,
+                                            fvf.nfeatures = 
+                                            3000) 
+
+# Prepare the SCT list object for integration
+split_seurat <- PrepSCTIntegration(object.list = split_seurat,
+                                   
+                                   anchor.features = 
+                                     integ_features)
+
+
+# data set is large so I run this before
+split_seurat <- lapply(X = split_seurat, FUN = RunPCA, 
+                       verbose = FALSE)
+
+# note that I have to set the reduction parameter of the FindIntegrationAnchors function
+# t to "rpca"
+
+# Find best buddies - can take a while to run
+integ_anchors <- FindIntegrationAnchors(object.list = 
+                                          split_seurat, 
+                                        normalization.method = "SCT", 
+                                        anchor.features = integ_features,
+                                        dims = 1:50,
+                                        reference = c(3, 5),
+                                        reduction = "rpca")
+
+rm(merged_seurat_object, merged_seurat_object_phase)
+gc()
+
+rm(split_seurat)
+# Integrate across strains
+seurat_integrated <- IntegrateData(anchorset = integ_anchors, 
+                                   normalization.method = "SCT",
+                                   dims = 1:50)
+
+seurat_integrated <- RunPCA(seurat_integrated)
+seurat_integrated <- RunUMAP(seurat_integrated,
+                       dims = 1:30, 
+                       reduction = "pca")
+
+seurat_integrated <- FindNeighbors(seurat_integrated,
+                             reduction = "umap", dims = 1:2)
+seurat_integrated <- FindClusters(seurat_integrated,
+                            resolution = seq(0.05, 3, 0.05))
+DimPlot(seurat_integrated)
+
+DefaultAssay(seurat_integrated) <- "RNA"
+
+seurat_integrated <- NormalizeData(seurat_integrated)
+
+FeaturePlot(seurat_integrated,
+            features = "Gpnmb", order = TRUE)
+```
+
+## Cell clustering with IKAP algorithm
+
 ## Session infomation
 ```{r session_info}
 sessionInfo()
