@@ -225,6 +225,8 @@ DefaultAssay(seurat_integrated) <- "integrated"
 seurat_integrated <- ikap3(seurat_integrated,
                            out.dir = "./IKAP")
 
+DefaultAssay(seurat_integrated) <- "RNA"
+
 saveRDS(seurat_integrated,
         "objects/macrophages.rds")
 
@@ -267,6 +269,60 @@ DoHeatmap(seurat_integrated,
 FeaturePlot(seurat_integrated, features = "Mmp12",
             order = TRUE, split.by = "group")
 ```
+
+## Comparing author's annotation of macrophages with mine
+
+### Author's justification of M2 macrophages
+
+### Identification of markers.
+
+```{r author_annotation}
+set.seed(123)
+colours <- distinctColorPalette(200)
+
+seurat_integrated <- readRDS("objects/macrophages.rds")
+
+DimPlot(seurat_integrated, group.by = "cell.type",
+        cols = colours) +
+  theme(aspect.ratio = 1)
+ggsave("figures/umap_author_MF_subtypes.pdf",
+       height = 5, width = 5, dpi = 500)
+
+# get markers based on author's mf annotation
+
+Idents(seurat_integrated) <- seurat_integrated$cell.type
+
+auth_celltype_markers <- FindAllMarkers(seurat_integrated,
+                                        assay = "RNA",
+                                        slot = "data",
+                                        only.pos = TRUE,
+                                        min.pct = 0,
+                                        logfc.threshold = 0)
+write.xlsx(auth_celltype_markers,
+           "results/auth_MF_subtype_markers.xlsx",
+           rowNames = TRUE)
+
+auth_celltype_markers_sig <- subset(auth_celltype_markers,
+                                    p_val_adj < 0.05)
+
+# plot mf markers
+top_auth_mf <- auth_celltype_markers_sig %>%
+  group_by(cluster) %>% top_n(10, avg_log2FC)
+
+seurat_integrated <- ScaleData(seurat_integrated,
+                               features = 
+                               rownames(seurat_integrated),
+                               assay = "RNA")
+
+DoHeatmap(seurat_integrated, 
+          features = top_auth_mf$gene,
+          label = FALSE, group.colors = colours) +
+    scale_color_manual(values = colours)
+ggsave("figures/heatmap_author_MF_subtypes.pdf",
+       height = 7, width = 7, dpi = 500)
+```
+
+### Obtain pathways specifically enriched in the MF subtypes
 
 ## Session infomation
 ```{r session_info}
