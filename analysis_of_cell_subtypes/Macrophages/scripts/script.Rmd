@@ -324,6 +324,14 @@ ggsave("figures/heatmap_author_MF_subtypes.pdf",
 
 ### Obtain pathways specifically enriched in the MF subtypes
 
+```{r specific}
+list.files("scripts")
+
+source("scripts/select_specific_markers.R")
+
+specific_markers <- select_spec_markers(auth_celltype_markers)
+```
+
 ## Session infomation
 ```{r session_info}
 sessionInfo()
