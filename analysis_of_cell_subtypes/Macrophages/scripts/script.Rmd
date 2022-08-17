@@ -282,11 +282,20 @@ colours <- distinctColorPalette(200)
 
 seurat_integrated <- readRDS("objects/macrophages.rds")
 
+seurat_integrated$group <- factor(seurat_integrated$group,
+                                  levels = c("PBS", "bleo"))
+
 DimPlot(seurat_integrated, group.by = "cell.type",
         cols = colours) +
   theme(aspect.ratio = 1)
 ggsave("figures/umap_author_MF_subtypes.pdf",
        height = 5, width = 5, dpi = 500)
+
+DimPlot(seurat_integrated, group.by = "cell.type",
+        cols = colours, split.by = "group") +
+  theme(aspect.ratio = 1)
+ggsave("figures/umap_author_MF_subtypes2.pdf",
+       height = 6.5, width = 6.5, dpi = 500)
 
 # get markers based on author's mf annotation
 
@@ -307,7 +316,7 @@ auth_celltype_markers_sig <- subset(auth_celltype_markers,
 
 # plot mf markers
 top_auth_mf <- auth_celltype_markers_sig %>%
-  group_by(cluster) %>% top_n(10, avg_log2FC)
+  group_by(cluster) %>% top_n(6, avg_log2FC)
 
 seurat_integrated <- ScaleData(seurat_integrated,
                                features = 
@@ -318,7 +327,7 @@ DoHeatmap(seurat_integrated,
           features = top_auth_mf$gene,
           label = FALSE, group.colors = colours) +
     scale_color_manual(values = colours)
-ggsave("figures/heatmap_author_MF_subtypes.pdf",
+ggsave("figures/heatmap_author_MF_subtypes2.pdf",
        height = 7, width = 7, dpi = 500)
 ```
 
@@ -330,7 +339,43 @@ list.files("scripts")
 source("scripts/select_specific_markers.R")
 
 specific_markers <- select_spec_markers(auth_celltype_markers)
+
+saveRDS(specific_markers,
+        "objects/cell_spec_MF_markers_from_auth.rds")
 ```
+
+### Use ORA to assess pathways enriched in M2 macrophages vs all other macrophages
+
+```{r ORA}
+library(enrichR)
+dbs <- listEnrichrDbs()
+tail(dbs, 100)
+dbs_keep <- c("MSigDB_Hallmark_2020")
+
+source("scripts/cell_specific_ora.R")
+
+cell_specific_ora(marker_list =  specific_markers, 
+                  dbs = dbs_keep)
+```
+
+### Use ORA to assess pathways upregulated in M2 macrophages bleo vs PBS
+
+```{r upreg_ora}
+set.seed(123)
+colours <- distinctColorPalette(200)
+
+seurat_integrated <- readRDS("objects/macrophages.rds")
+
+seurat_integrated$group <- factor(seurat_integrated$group,
+                                  levels = c("PBS", "bleo"))
+
+Idents(seurat_integrated) <- seurat_integrated$cell.type
+
+M2 <- subset(seurat_integrated,
+             )
+```
+
+## My clustering
 
 ## Session infomation
 ```{r session_info}
