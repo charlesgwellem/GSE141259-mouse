@@ -1,0 +1,290 @@
+---
+title: "cellchat"
+author: "Charles"
+date: "11 5 2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load in the libraries
+
+```{r libraries}
+.libPaths("V:/GROUPS/AG Ramming/Fellows/Charles/R-4.1.1/library")
+library(Matrix)
+library(SeuratObject)
+library(Seurat)
+library(SeuratWrappers)
+library(SeuratData)
+library(stringr)
+library(ggplot2)
+```
+
+# load in the data set
+```{r dataset}
+list.files("objects")
+
+seurat <- readRDS("objects/integrated_and_clustered_GSE141259_and_lab.rds")
+
+DimPlot(seurat, split.by = "GSE", label = T)
+
+DimPlot(seurat,
+        group.by = "integrated_snn_res.0.2", 
+        split.by = "GSE",
+        label = T)
+table(seurat$GSE)
+
+cell_clusters <- table(seurat$cell.type, 
+      seurat$integrated_snn_res.0.2)
+
+cell_clusters <- t(cell_clusters)
+
+cell_clusters <- as.data.frame.matrix(cell_clusters)
+
+for (i in 1:nrow(cell_clusters)) {
+  
+  cell_clusters[i, "annot"] <- colnames(cell_clusters)[which.max(cell_clusters[i, ])]
+  
+}
+
+cell_clusters
+
+# adjust cluster 17 (row index 18) to be ILC2
+cell_clusters[18, "annot"] <- "ILC2"
+
+seurat$integrated_snn_res.0.2_modif1 <-
+  as.numeric(seurat$integrated_snn_res.0.2)-1
+
+for (i in rownames(cell_clusters)) {
+  row_as_numeric <- as.numeric(i)
+  seurat$integrated_snn_res.0.2_modif1[
+    seurat$integrated_snn_res.0.2_modif1==i
+  ] <- cell_clusters[i, "annot"]
+  
+}
+
+DimPlot(seurat,
+        group.by = "integrated_snn_res.0.2_modif1")
+
+table(seurat$integrated_snn_res.0.2_modif1,
+      seurat$GSE)
+
+memory.limit(799165999999)
+gc()
+# perform imputation
+seurat <- RunALRA(seurat)
+
+saveRDS(seurat,
+        "objects/integrated_and_clustered_GSE141259_and_lab.rds")
+
+# write out metadata
+
+write.xlsx(seurat@meta.data,
+           "metadata/metadata.xlsx",
+           rowNames=T)
+```
+
+# subset days 10 and 28 from the public and mouse data set
+```{r day10 and 28}
+DimPlot(seurat,
+        group.by = "day")
+
+Idents(seurat) <- "day"
+
+days10_and_28 <- subset(seurat,
+                        idents = c(10, 28))
+
+DimPlot(days10_and_28, group.by = "day", split.by = "day")
+
+Idents(days10_and_28) <- c("day", "GSE")
+
+days10_and_28_keep <- days10_and_28[,
+                                    days10_and_28@meta.data$day==10 | days10_and_28@meta.data$GSE=="lab"]
+
+DimPlot(days10_and_28_keep, split.by = "day")
+
+saveRDS(days10_and_28_keep,
+        "objects/public_day10_and_lab_day28.rds")
+```
+
+# Prepare for cellchat by only subsetting those cells with a count of at least 20 in any of both conditions (bleo vs saline)
+
+```{r subsetting}
+
+Idents(days10_and_28_keep) <- days10_and_28_keep$group
+
+days10_and_28_keep$group1 <- days10_and_28_keep$group
+
+days10_and_28_keep$group1[
+  days10_and_28_keep$group1=="PBS"
+] <- "healthy"
+
+days10_and_28_keep$group1[
+  days10_and_28_keep$group1=="saline"
+] <- "healthy"
+
+
+days10_and_28_keep$group1[!days10_and_28_keep$group1=="healthy"
+] <- "fibrotic"
+
+Idents(days10_and_28_keep) <- "group1"
+DimPlot(days10_and_28_keep,
+        group.by = "group1")
+
+cells_per_group <- table(days10_and_28_keep$integrated_snn_res.0.2_modif1,
+                           days10_and_28_keep$group1)
+
+days10_and_28_keep <- SCTransform(days10_and_28_keep,
+                                  vars.to.regress = "GSE")
+days10_and_28_keep <- RunALRA(days10_and_28_keep,
+                              assay = "SCT",
+                              slot = "data")
+```
+
+# Use all cells for cellchat: subset for bleo condition
+```{r cellchat}
+Idents(days10_and_28_keep) <- "group1"
+subset_bleo <- subset(days10_and_28_keep,
+                      idents = "fibrotic")
+
+DimPlot(subset_bleo)
+
+saveRDS(subset_bleo,
+        "objects/seu_for_cellchat_fibrotic.rds")
+```
+
+# Perform cellchat
+## load in the libraries
+```{r cellchat}
+library(CellChat)
+library(patchwork)
+library(NMF)
+library(ComplexHeatmap)
+library(ggalluvial)
+options(stringsAsFactors = FALSE)
+```
+
+## Part I: Data input & processing and initialization of CellChat object
+```{r input}
+
+Idents(subset_bleo) <- subset_bleo$integrated_snn_res.0.2_modif1
+
+DimPlot(subset_bleo, group.by = "group1")
+
+data.input <- GetAssayData(subset_bleo, assay = "alra", slot = "data") # normalized data matrix
+labels <- Idents(subset_bleo)
+meta <- data.frame(labels = labels, row.names = names(labels)) # create a dataframe of the cell labels
+cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels")
+
+cellchat <- addMeta(cellchat, meta = meta, meta.name = "labels")
+cellchat <- setIdent(cellchat, ident.use = "labels") # set "labels" as default cell identity
+levels(cellchat@idents) # show factor levels of the cell labels
+
+# set LR-interaction db
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+
+
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB, 
+                           search = "Cell-Cell Contact") # use Secreted Signaling
+# use all CellChatDB for cell-cell communication analysis
+# CellChatDB.use <- CellChatDB # simply use the default CellChatDB
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multiprocess", workers = 4) # do parallel
+
+
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+# project gene expression data onto PPI (Optional: when running it, USER should set `raw.use = FALSE` in the function `computeCommunProb()` in order to use the projected data)
+# cellchat <- projectData(cellchat, PPI.human)
+```
+
+## Part II: Inference of cell-cell communication network
+```{r inference of cell-cell com}
+computeAveExpr(cellchat, features = c("Jag1","Notch2"), type =  "truncatedMean", trim = 0.01)
+
+cellchat <- computeCommunProb(cellchat,
+                              type =  "truncatedMean", trim = 0.01,
+                              population.size = T)
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+
+# infer cell-cell comm at pathway level
+cellchat <- computeCommunProbPathway(cellchat)
+
+# aggregated cellcom network
+cellchat <- aggregateNet(cellchat)
+
+
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+
+mat <- cellchat@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+
+
+mat <- cellchat@net$count
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+## Part III: Visualization of cell-cell communication network
+```{r comm network}
+pathways.show <- c("NOTCH") 
+# Hierarchy plot
+# Here we define `vertex.receive` so that the left portion of the hierarchy plot shows signaling to fibroblast and the right portion shows signaling to immune cells 
+vertex.receiver = seq(1,4) # a numeric vector. 
+netVisual_aggregate(cellchat, signaling = pathways.show,  vertex.receiver = vertex.receiver)
+# Circle plot
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "circle")
+
+# Heatmap
+par(mfrow=c(1,1))
+netVisual_heatmap(cellchat, signaling = pathways.show, color.heatmap = "Reds")
+
+netAnalysis_contribution(cellchat,
+                         signaling = pathways.show)+
+  theme(aspect.ratio = 1)
+
+pairLR.NOTCH <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = FALSE)
+LR.show <- pairLR.NOTCH[13,] # show one ligand-receptor pair
+# Hierarchy plot
+vertex.receiver = seq(1,4) # a numeric vector
+netVisual_individual(cellchat, signaling = pathways.show,  pairLR.use = LR.show, vertex.receiver = vertex.receiver)
+#> [[1]]
+# Circle plot
+netVisual_individual(cellchat, signaling = pathways.show, pairLR.use = LR.show, layout = "circle")
+
+netVisual_individual(cellchat, 
+                     sources.use = "Myofibroblasts",
+                     signaling = pathways.show,
+                     thresh = 0.1,
+                     pairLR.use = LR.show, layout = "circle")
+
+saveRDS(cellchat, "objects/fibrotic_cellchat.rds")
+```
+

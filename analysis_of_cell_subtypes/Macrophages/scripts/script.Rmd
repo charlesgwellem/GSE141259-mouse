@@ -366,6 +366,108 @@ Some paper have associated Arg1-expressing tumour associated macrophages that he
 - The metabolic shift which drives of fibroblasts and relevant cells to convert to myofibroblasts requires enhanced aerobic glycolysis, lipogenesis, OXPHOS, and anaplerosis (e.g., glutaminolysis) and is evident in lung regions of active fibrosis in patients with IPF.
 - M2 macrophages co-appear with myofibroblasts at day 10.
 
+## Using ORA to identify all pathways enriched in res. Mfs.
+
+```{r res_mfpways}
+library(enrichR)
+
+dbs <- listEnrichrDbs()
+
+tail(dbs, 100)
+
+dbs_keep <- c("MSigDB_Hallmark_2020",
+              "GO_Biological_Process_2021",
+              "GO_Cellular_Component_2021",
+              "GO_Molecular_Function_2021",
+              "KEGG_2019_Mouse")
+
+list.files("results")
+
+markers <- read.xlsx("results/auth_MF_subtype_markers.xlsx",
+                     rowNames = TRUE)
+
+markers_res_mf <- subset(markers,
+                         cluster == "Resolution macrophages")
+
+all(markers_res_mf$avg_log2FC > 0) # T
+
+res_mf_marker_genes <- markers_res_mf$gene
+
+res_mf_pways <- enrichr(res_mf_marker_genes, dbs_keep)
+
+write.xlsx(res_mf_pways,
+           "results/pways_res_mfs.xlsx",
+           rowNames = TRUE)
+
+for (pway in names(res_mf_pways)) {
+  
+  pway_oi <- res_mf_pways[[pway]]
+  
+  pway_oi_sig <- subset(pway_oi,
+                        Adjusted.P.value < 0.05)
+  
+  if(!is.null(pway_oi_sig) & nrow(pway_oi_sig) != 0){
+    
+    plotEnrich(pway_oi) +
+      ggtitle(paste0("res_mf_", pway)) +
+      scale_x_discrete(expand = c(0, 0)) +
+      scale_y_continuous(expand = c(0, 0))
+    ggsave(paste0("figures/res_mf_enriched_",
+                  pway, ".pdf"))
+    
+    
+  }
+
+}
+
+list.files("objects")
+
+mf_specific_mkers <- readRDS("objects/cell_spec_MF_markers_from_auth.rds")
+
+res_mf_spec_mk_genes <- mf_specific_mkers$`Resolution macrophages`
+
+## group specific markers using GO_CC
+
+res_mf_cc <- enrichr(res_mf_spec_mk_genes, "GO_Cellular_Component_2021")
+
+write.xlsx(res_mf_cc,
+           "results/res_mf_cc.xlsx",
+           rowNames = TRUE)
+
+plotEnrich(res_mf_cc)
+
+# make heatmap of res_mf_spec_mk_genes
+
+res_mf_pways_keep <- subset(markers_res_mf,
+                            gene %in% res_mf_spec_mk_genes)
+
+res_mf_pways_keep$ratio <- res_mf_pways_keep$pct.1 /
+  res_mf_pways_keep$pct.2
+
+res_mf_pways_keep <- res_mf_pways_keep[order(res_mf_pways_keep$ratio,
+                                             decreasing = T), ]
+
+top_res_mf <- res_mf_pways_keep %>% top_n(50,
+                                          avg_log2FC)
+
+seurat_integrated <- readRDS("objects/macrophages.rds")
+
+seurat_integrated <- ScaleData(seurat_integrated,
+                               features = rownames(seurat_integrated))
+
+DoHeatmap(seurat_integrated,
+          features = top_res_mf$gene,
+          label = FALSE,
+          group.colors = colours) +
+  scale_color_manual(values = colours)
+
+VlnPlot(seurat_integrated,
+        features = c("Folr1", "Procr",
+                     "H2-M2", "Mmp12")) +
+  scale_color_manual(values = colours)
+
+```
+
 ### Use ORA to assess pathways upregulated in M2 macrophages bleo vs PBS
 
 ```{r upreg_ora}
@@ -401,6 +503,26 @@ table(seurat_integrated$cell.type, seurat_integrated$group)
 ```
 
 There are few DEGs in M2 when we compare them in bleo vs in the PBS conditions because there are very few M2s (56) in the healthy condition compared to 2306 in the fibrotic condition.
+
+### Use ORA to assess pathways upregulated in resolution macrophages
+
+```{r resol_mfs}
+list.files("objects")
+
+set.seed(123)
+colours <- distinctColorPalette(200)
+
+seurat_integrated <- readRDS("objects/macrophages.rds")
+
+seurat_integrated$group <- factor(seurat_integrated$group,
+                                  levels = c("PBS", "bleo"))
+
+Idents(seurat_integrated) <- seurat_integrated$cell.type
+
+res_mf <- subset(seurat_integrated,
+            idents = "Resolution macrophages")
+
+```
 
 ## My clustering
 
@@ -614,6 +736,12 @@ class(resl_mfs_bleo$day)
 
 resl_mfs_bleo$day <- factor(resl_mfs_bleo$day)
 
+write.csv(resl_mfs_bleo,
+          "results/resl_mfs_bleo.csv",
+          quote = FALSE,
+          row.names = TRUE,
+          col.names = TRUE)
+
 output <- getSignificance(resl_mfs_bleo, 
                           group = "day", 
                           fit = "ANOVA")
@@ -624,23 +752,32 @@ View(output)
 
 View(output)
 
-colnames(resl_mfs_bleo)[grep("IRF7", 
+colnames(resl_mfs_bleo)[grep("DEGRA", 
                              colnames(resl_mfs_bleo))]
 
-output["REACTOME_TRAF6_MEDIATED_IRF7_ACTIVATION", ]
+output["REACTOME_COLLAGEN_DEGRADATION", ]
 ```
 
 ## Plotting the development of interesting pathways on resolution MFs.
 
 ```{r cd44_pways}
+library(escape)
+
+path_to_gsva <- "V:/GROUPS/AG Ramming/Fellows/Charles/Analyses/P01-ATF3 in ECs-Charles/GSE141259-mouse/gsva/objects"
+
+gsva_file <- "gsva_obj_df_with_day.xlsx"
+
+gsva_df <- read.xlsx(paste0(path_to_gsva,
+                            "/", gsva_file),
+                     rowNames = TRUE)
+
+head(gsva_df[1:10, 1:10])
+
+
 # according to reactome 
 # cd44 is involved in
-cd44_pways <- c("REACTOME_NEGATIVE_REGULATION_OF_FLT3",
-                "REACTOME_FLT3_SIGNALING",
-                "REACTOME_DOWNREGULATION_OF_ERBB4_SIGNALING",
-                "REACTOME_SIGNALING_BY_ERBB4",
-                "REACTOME_TRAF6_MEDIATED_IRF7_ACTIVATION_IN_TLR7_8_OR_9_SIGNALING",
-                "REACTOME_TRAF6_MEDIATED_IRF7_ACTIVATION")
+cd44_pways <- c("",
+"REACTOME_COLLAGEN_DEGRADATION")
 
 gsva_cd44 <- resl_mfs[,
                          c(cd44_pways, "day", "group")]
@@ -649,6 +786,22 @@ gsva_cd44 <- gsva_cd44 %>%
   gather(cd44_pways, 
          key = "pways", value = "score")
 # View(gsva_cd44)
+
+gsva_cd44_keep <- gsva_cd44 %>%
+  group_by(pways, day, group) %>%
+  summarise(the_median = median(score))
+
+gsva_cd44_keep$group <- factor(gsva_cd44_keep$group,
+                               levels = c("PBS", "bleo"))
+
+ggplot(gsva_cd44_keep, 
+       aes(x = day, y = the_median, 
+           color = pways, group = pways)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_grid(~ group) +
+  expand_limits(x=c(0,30), y=c(0.10, 1)) +
+  theme_bw()
 
 
 library(randomcoloR)
@@ -712,7 +865,6 @@ library(randomcoloR)
 set.seed(123)
 colours <- distinctColorPalette(300)
 
-
 ggplot(gsva_cd44_bleo, aes(x=day, y=the_median,
                            fill = pways, group = "pways")) +
   geom_point(aes(color = pways)) +
@@ -723,6 +875,236 @@ ggplot(gsva_cd44_bleo, aes(x=day, y=the_median,
   theme_minimal()
 ```
 
+## Match collagen production in fibroblasts and collagen degradation by macophages.
+
+```{r fib_resmf}
+library(escape)
+
+path_to_gsva <- "V:/GROUPS/AG Ramming/Fellows/Charles/Analyses/P01-ATF3 in ECs-Charles/GSE141259-mouse/gsva/objects"
+
+gsva_file <- "gsva_obj_df_with_day.xlsx"
+
+gsva_df <- read.xlsx(paste0(path_to_gsva,
+                            "/", gsva_file),
+                     rowNames = TRUE)
+
+head(gsva_df[1:10, 1:10])
+
+colnames(gsva_df)[grep("COLLAG", 
+                             colnames(gsva_df))]
+
+pway_oi <- c("REACTOME_COLLAGEN_FORMATION",
+             "REACTOME_COLLAGEN_CHAIN_TRIMERIZATION",
+             "REACTOME_COLLAGEN_BIOSYNTHESIS_AND_MODIFYING_ENZYMES",
+             "REACTOME_ECM_PROTEOGLYCANS",
+           "REACTOME_COLLAGEN_DEGRADATION",
+           "REACTOME_CROSSLINKING_OF_COLLAGEN_FIBRILS")
+
+colnames(gsva_df)[grep("ECM", 
+                             colnames(gsva_df))]
+
+unique(gsva_df$celltype)
+
+cells_oi <- subset(gsva_df,
+                   celltype %in% 
+                     c("Resolution macrophages", 
+                       "Myofibroblasts"))
+
+cells_oi <- cells_oi[, c(pway_oi, "day", "group",
+                         "celltype")]
+
+to_plot <- cells_oi %>%
+  gather(pway_oi, 
+         key = "pways", value = "score")
+
+to_plot_keep <- to_plot %>%
+  group_by(pways, day, group) %>%
+  summarise(the_median = median(score))
+
+to_plot_keep$group <- factor(to_plot_keep$group,
+                               levels = c("PBS", "bleo"))
+
+ggplot(to_plot_keep, 
+       aes(x = day, y = the_median, 
+           color = pways, group = pways)) + 
+  geom_point() + 
+  geom_line() + 
+  facet_grid(~ group) +
+  expand_limits(x=c(0,30), y=c(0.10, 1)) +
+  theme_bw() + NoLegend()
+```
+
+### Find out the 5 most inportant signalling pathways in resolution macrophages and how they vary from days 3 through 28 during fibrosis.
+
+### By Variance threshold
+
+```{python VarThresh}
+import pandas as pd
+
+X = pd.read_csv("results/resl_mfs_bleo.csv",
+          sep = ",",index_col = 0)
+
+X.head()
+
+# remove the day column as it is categorical
+X_num = X.drop(columns=['day'])
+ 
+print(X_num.head())
+
+# import modules
+from sklearn.feature_selection import VarianceThreshold
+
+# remove zero-variance features 
+selector = VarianceThreshold(threshold=0)  # 0 is default
+ 
+print(selector.fit_transform(X_num))
+
+# Specify `indices=True` to get indices of selected features
+print(selector.get_support(indices=True))
+
+# Use indices to get the corresponding column names of selected features
+num_cols = list(X_num.columns[selector.get_support(indices=True)])
+ 
+print(num_cols)
+
+# Subset `X_num` to retain only selected features
+X_num = X_num[num_cols]
+ 
+print(X_num)
+```
+
+Results from the variance analysis shows that only one feature has a variance of 0, from days 3 through 28 of fibrosis.
+
+### Mutual information classification
+
+```{python MIC}
+import pandas as pd
+
+X = pd.read_csv("results/resl_mfs_bleo.csv",
+          sep = ",",index_col = 0)
+
+from sklearn.preprocessing import LabelEncoder
+ 
+le = LabelEncoder()
+
+# remove day, the categorical variable
+X_num = X.drop(columns=['day'])
+
+print(X_num)
+
+from sklearn.preprocessing import LabelEncoder
+ 
+le = LabelEncoder()
+
+y = X['day']
+ 
+print(y)
+
+y = le.fit_transform(y)
+
+from sklearn.feature_selection import mutual_info_classif
+ 
+print(mutual_info_classif(X_num, y, random_state=68))
+
+from sklearn.feature_selection import SelectKBest
+from functools import partial
+ 
+score_func = partial(mutual_info_classif, random_state=68)
+ 
+# Select top 10 features with the most mutual information
+selection = SelectKBest(score_func=score_func, k=10)
+ 
+print(selection.fit_transform(X_num, y))
+
+X = X_num[X_num.columns[selection.get_support(indices=True)]]
+ 
+print(X.columns)
+```
+
+### Mutual information regression
+
+```{python MIC}
+import pandas as pd
+
+X = pd.read_csv("results/resl_mfs_bleo.csv",
+          sep = ",",index_col = 0)
+
+from sklearn.preprocessing import LabelEncoder
+ 
+le = LabelEncoder()
+
+# remove day, the categorical variable
+X_num = X.drop(columns=['day'])
+
+print(X_num)
+
+from sklearn.preprocessing import LabelEncoder
+ 
+le = LabelEncoder()
+
+y = X['day']
+ 
+print(y)
+
+from sklearn.feature_selection import mutual_info_regression
+ 
+print(mutual_info_regression(X_num, y, random_state=68))
+
+from sklearn.feature_selection import SelectKBest
+from functools import partial
+ 
+score_func = partial(mutual_info_regression, random_state=68)
+ 
+# Select top 10 features with the most mutual information
+selection = SelectKBest(score_func=score_func, k=10)
+ 
+print(selection.fit_transform(X_num, y))
+
+X = X_num[X_num.columns[selection.get_support(indices=True)]]
+ 
+print(X.columns)
+```
+
+
+### By SFFS
+
+```{python SFFS}
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+import pandas as pd
+import matplotlib.pyplot as plt
+from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
+
+X = pd.read_csv("results/resl_mfs_bleo.csv",
+          sep = ",",index_col = 0)
+
+# remove day, the categorical variable
+X_num = X.drop(columns=['day'])
+
+y = X['day']
+
+lr = LogisticRegression(max_iter=1000,
+multi_class='multinomial', solver='lbfgs')
+
+# Sequential forward selection
+sfs = SFS(lr,
+          k_features=5,
+          forward=True,
+          floating=True,
+          scoring='accuracy',
+          cv=0)
+sfs.fit(X_num, y)
+# Print the chosen feature names
+print(sfs.subsets_)
+# Print the accuracy of the model after sequential forward selection
+print(sfs.subsets_[3]['avg_score'])
+
+# Plot the model accuracy
+plot_sfs(sfs.get_metric_dict())
+plt.show()
+
+```
 
 ## Session infomation
 ```{r session_info}
