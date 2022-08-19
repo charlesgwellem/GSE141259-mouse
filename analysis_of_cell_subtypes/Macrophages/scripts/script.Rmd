@@ -358,6 +358,14 @@ cell_specific_ora(marker_list =  specific_markers,
                   dbs = dbs_keep)
 ```
 
+Some paper have associated Arg1-expressing tumour associated macrophages that help in tumour resolution. Studies also show that M2 MFs are pro-resolving. After performing over-representation analysis on genes specifically enriched in M2 MFs compared to the other MFs,  results in this analysis are consistent with the fact the M2 MFs in fibrosis are foes rather than friends for the following reasons.
+
+- They are the only MFs secreting factors that promote EMT (epithelial to mesenchymal transition).
+- They are amplified during lung fibrosis.
+- They are enriched with oxidative phosphorylation, which accoridng to this [paper](https://jpet.aspetjournals.org/content/379/3/290.long) is a known and targetable pathogenic pathway in lung fibrosis.
+- The metabolic shift which drives of fibroblasts and relevant cells to convert to myofibroblasts requires enhanced aerobic glycolysis, lipogenesis, OXPHOS, and anaplerosis (e.g., glutaminolysis) and is evident in lung regions of active fibrosis in patients with IPF.
+- M2 macrophages co-appear with myofibroblasts at day 10.
+
 ### Use ORA to assess pathways upregulated in M2 macrophages bleo vs PBS
 
 ```{r upreg_ora}
@@ -372,10 +380,349 @@ seurat_integrated$group <- factor(seurat_integrated$group,
 Idents(seurat_integrated) <- seurat_integrated$cell.type
 
 M2 <- subset(seurat_integrated,
-             )
+            idents = "M2 macrophages")
+
+Idents(M2) <- "group"
+
+M2_bleo_vs_healthy_degs <- FindMarkers(M2,
+                                          assay = "RNA",
+                                          slot = "data",
+                                          ident.1 = "bleo")
+write.xlsx(M2_bleo_vs_healthy_degs,
+           "results/M2_bleo_vs_PBS_degs.xlsx",
+           rowNames = TRUE)
+
+M2_sig <- subset(M2_bleo_vs_healthy_degs,
+                 p_val_adj < 0.05 & avg_log2FC > 0)
+
+M2_sig # very few DEGs.
+
+table(seurat_integrated$cell.type, seurat_integrated$group)
 ```
 
+There are few DEGs in M2 when we compare them in bleo vs in the PBS conditions because there are very few M2s (56) in the healthy condition compared to 2306 in the fibrotic condition.
+
 ## My clustering
+
+I determined my best clusters using the IKAP algorithm. This algorithm showed that 7 PCs and 8 clusters best represented cell populations within the macrophage sub-population.
+
+### Find out markers for each of the IKAP clusters.
+
+```{r my_clustering}
+set.seed(123)
+colours <- distinctColorPalette(200)
+
+seurat_integrated <- readRDS("objects/macrophages.rds")
+
+seurat_integrated$group <- factor(seurat_integrated$group,
+                                  levels = c("PBS", "bleo"))
+
+Idents(seurat_integrated) <- factor(as.numeric(seurat_integrated$PC19K11))
+
+pc19k11_markers <- FindAllMarkers(seurat_integrated,
+                                  assay = "RNA",
+                                  slot = "data",
+                                  only.pos = TRUE)
+
+clust4 <- subset(pc19k11_markers,
+                 cluster==4)
+
+DimPlot(seurat_integrated, 
+        cols = colours, label = TRUE, split.by = "group") +
+  theme(aspect.ratio = 1)
+ggsave("figures/umap_author_MF_subtypes.pdf",
+       height = 5, width = 5, dpi = 500)
+
+PC7K8_markers <- read.xlsx("results/PC7K8_markers.xlsx",
+                            rowNames = TRUE)
+
+sig_PC7K8_markers <- subset(PC7K8_markers,
+                            p_val_adj < 0.05)
+
+top_sig_PC7K8_markers <- sig_PC7K8_markers %>%
+  group_by(cluster) %>% top_n(7, avg_log2FC)
+
+as.data.frame(top_sig_PC7K8_markers)
+
+DoHeatmap(seurat_integrated, 
+          features = top_sig_PC7K8_markers$gene,
+          group.colors = colours)+
+  scale_color_manual(values = colours)
+```
+
+After my own exploration, I decide to stick with the annotation provided by the authors.
+
+## Comparing enriched pathways in the various clusters
+
+### First convert gene symbole to the entrez gene names
+
+```{r entrez}
+library(org.Mm.eg.db)
+
+res_tableOE <- read.xlsx("results/auth_MF_subtype_markers.xlsx",
+                           rowNames = TRUE)
+
+## clusterProfiler does not work as easily using gene names, so we will turn gene names into Ensembl IDs using 
+## clusterProfiler::bitr and merge the IDs back with the DE results
+
+ids <- bitr(res_tableOE$gene, 
+            fromType = "SYMBOL", 
+            toType = c("ENSEMBL", "ENTREZID"), 
+            OrgDb = "org.Mm.eg.db")
+# 0.48% of input gene IDs are fail to map...
+
+## The gene names can map to more than one Ensembl ID (some genes change ID over time), 
+## so we need to remove duplicate IDs prior to assessing enriched GO terms
+non_duplicates <- which(duplicated(ids$SYMBOL) == FALSE)
+
+ids <- ids[non_duplicates, ] 
+
+## Merge the Ensembl IDs with the results     
+merged_gene_ids <- merge(x=res_tableOE, y=ids, by.x="gene", by.y="SYMBOL")  
+
+write.xlsx(merged_gene_ids,
+           "results/auth_MF_subtype_markers_with_entrez.xlsx",
+           rowNames = TRUE)
+colnames(merged_gene_ids)
+```
+
+### Obtain entrez gene names for each of the marker genes
+
+```{r obtaining_entrez}
+list.files("scripts")
+source("scripts/select_spec_entrez_markers.R")
+
+res_tableOE <- read.xlsx("results/auth_MF_subtype_markers_with_entrez.xlsx",
+                           rowNames = TRUE)
+
+entrez_markers <- select_spec_entrez_markers(res_tableOE)
+
+saveRDS(entrez_markers,
+        "objects/auth_MF_subtype_markers_with_entrez.rds")
+
+# all significant cell markers
+
+list.files("scripts")
+source("scripts/select_all_signif_entrez_markers.R")
+
+entrez_markers2 <- select_all_sig_entrez_markers(res_tableOE)
+
+saveRDS(entrez_markers2,
+        "objects/auth_all_MF_subtype_markers_with_entrez.rds")
+```
+
+## Compare the various macrophage subclusters, based on their specific marker genes.
+
+### Load the marker genes
+
+```{r load_geneset}
+list.files("objects")
+
+library(clusterProfiler)
+library(org.Mm.eg.db)
+
+specific_entrez <- readRDS("objects/auth_all_MF_subtype_markers_with_entrez.rds")
+
+R.utils::setOption("clusterProfiler.download.method","auto")
+getOption("clusterProfiler.download.method")
+
+ck <- compareCluster(geneCluster = specific_entrez, 
+                     fun = enrichPathway, 
+                     pvalueCutoff = 0.05,
+                     qvalueCutoff = 0.05,
+                      organism = "mmu")
+
+ck <- setReadable(ck, 
+                  OrgDb = org.Mm.eg.db, 
+                  keyType="ENTREZID")
+head(ck) 
+# View(ck)
+head(as.data.frame(ck))
+
+dotplot(ck) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5), aspect.ratio = 1)
+
+# with enrichGO
+enGO <- compareCluster(geneCluster = specific_entrez, 
+                         fun = "enrichGO", 
+                         pvalueCutoff = 0.05,
+                         qvalueCutoff = 0.05,
+                         OrgDb = org.Mm.eg.db)
+
+enGO <- setReadable(enGO, 
+                    OrgDb = org.Mm.eg.db, 
+                    keyType="ENTREZID")
+head(enGO) 
+# View(enGO)
+head(as.data.frame(enGO))
+
+dotplot(enGO, showCategory = 5) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5), aspect.ratio = 1)
+
+
+# with enrichPathway
+require(ReactomePA)
+
+R.utils::setOption("clusterProfiler.download.method","auto")
+getOption("clusterProfiler.download.method")
+
+enReactome <- compareCluster(geneCluster = specific_entrez, 
+                         fun = "enrichPathway", 
+                         pvalueCutoff = 0.05,
+                         qvalueCutoff = 0.05,
+                         organism = "mouse",
+                         readable = TRUE)
+# View(enReactome)
+head(as.data.frame(enReactome))
+
+dotplot(enReactome, showCategory = 5) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5), aspect.ratio = 1)
+```
+
+### identify signalling pathways that change in resolving macrophages from day 3 to 28 of lung fibrosis.
+
+```{r load_gsva}
+library(escape)
+
+path_to_gsva <- "V:/GROUPS/AG Ramming/Fellows/Charles/Analyses/P01-ATF3 in ECs-Charles/GSE141259-mouse/gsva/objects"
+
+gsva_file <- "gsva_obj_df_with_day.xlsx"
+
+gsva_df <- read.xlsx(paste0(path_to_gsva,
+                            "/", gsva_file),
+                     rowNames = TRUE)
+
+head(gsva_df[1:10, 1:10])
+
+# subset only res_mfs
+
+resl_mfs <- subset(gsva_df,
+                   celltype == "Resolution macrophages")
+
+# only bleo
+resl_mfs_bleo <- subset(resl_mfs,
+                        group == "bleo")
+
+table(resl_mfs_bleo$celltype)
+
+# remove irrelevant columns
+resl_mfs_bleo$celltype <- NULL
+resl_mfs_bleo$group <- NULL
+resl_mfs_bleo$replicate <- NULL
+
+class(resl_mfs_bleo$day)
+
+resl_mfs_bleo$day <- factor(resl_mfs_bleo$day)
+
+output <- getSignificance(resl_mfs_bleo, 
+                          group = "day", 
+                          fit = "ANOVA")
+
+output <- output[order(output$FDR), ]
+
+View(output)
+
+View(output)
+
+colnames(resl_mfs_bleo)[grep("IRF7", 
+                             colnames(resl_mfs_bleo))]
+
+output["REACTOME_TRAF6_MEDIATED_IRF7_ACTIVATION", ]
+```
+
+## Plotting the development of interesting pathways on resolution MFs.
+
+```{r cd44_pways}
+# according to reactome 
+# cd44 is involved in
+cd44_pways <- c("REACTOME_NEGATIVE_REGULATION_OF_FLT3",
+                "REACTOME_FLT3_SIGNALING",
+                "REACTOME_DOWNREGULATION_OF_ERBB4_SIGNALING",
+                "REACTOME_SIGNALING_BY_ERBB4",
+                "REACTOME_TRAF6_MEDIATED_IRF7_ACTIVATION_IN_TLR7_8_OR_9_SIGNALING",
+                "REACTOME_TRAF6_MEDIATED_IRF7_ACTIVATION")
+
+gsva_cd44 <- resl_mfs[,
+                         c(cd44_pways, "day", "group")]
+
+gsva_cd44 <- gsva_cd44 %>%
+  gather(cd44_pways, 
+         key = "pways", value = "score")
+# View(gsva_cd44)
+
+
+library(randomcoloR)
+set.seed(123)
+colours <- distinctColorPalette(300)
+
+days <- unique(gsva_cd44$day)
+
+for (day_oi in days) {
+day_df <- subset(gsva_cd44,
+               day == day_oi)
+
+day_df$group <- factor(day_df$group,
+                     levels = c("PBS", "bleo"))
+
+ggplot(day_df, aes(celltype, score, fill = pways))+
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  ggtitle(paste0("day_", day_oi)) +
+  facet_grid(~ group) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+ scale_fill_manual(values = colours) 
+ggsave(paste0("figures/day_", day_oi, ".pdf"),
+       height = 5, width = 9, dpi = 500)
+}
+
+library(ggpubr)
+
+day_df <- subset(gsva_cd44,
+               day == day_oi)
+
+day_df$group <- factor(day_df$group,
+                     levels = c("PBS", "bleo"))
+
+p <- ggplot(day_df, aes(celltype, score, fill = pways))+
+  geom_bar(stat = "identity") +
+  ggtitle(paste0("day_", day_oi)) +
+  facet_grid(~ group) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+ scale_fill_manual(values = colours) 
+
+# Extract the legend. Returns a gtable
+leg <- get_legend(p)
+
+# Convert to a ggplot and print
+as_ggplot(leg)
+
+ggsave("figures/legend.pdf",
+       height = 5, width = 5, dpi = 300)
+
+gsva_cd44_bleo <- subset(gsva_cd44,
+                         group == "bleo")
+
+View(gsva_cd44_bleo)
+
+gsva_cd44_bleo <- gsva_cd44 %>% group_by(day, pways) %>%
+  summarise(the_median = median(score))
+
+library(randomcoloR)
+set.seed(123)
+colours <- distinctColorPalette(300)
+
+
+ggplot(gsva_cd44_bleo, aes(x=day, y=the_median,
+                           fill = pways, group = "pways")) +
+  geom_point(aes(color = pways)) +
+  geom_line(aes(color = pways)) +
+  # geom_line(aes(color = pways), size = 1) +
+  scale_fill_manual(values = colours) +
+  # scale_color_manual(values = colours) +
+  theme_minimal()
+```
+
 
 ## Session infomation
 ```{r session_info}
