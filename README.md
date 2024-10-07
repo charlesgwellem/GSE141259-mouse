@@ -44,21 +44,6 @@ You can install the required packages using the following code:
 install.packages(c("Seurat", "dplyr", "ggplot2", "patchwork"))
 BiocManager::install("CellChat")
 ```
-
-### **Running the Analysis**
-
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/yourusername/GSE141259-mouse-EDA.git
-   cd GSE141259-mouse-EDA
-   ```
-
-2. **Run the RMarkdown File**:
-   Open the `GSE141259_analysis.Rmd` file in RStudio and knit the document to generate the analysis report.
-
-3. **Explore the Results**:
-   The report will contain visualizations of the clustering, cell communication networks, and cell subtype characterizations.
-
 ---
 
 ## **Key Steps and Results**
